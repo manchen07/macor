@@ -1,0 +1,500 @@
+---
+title: "Data Generation"
+author: "Jihyun & Man"
+date: "03/30/2020"
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r, include = FALSE, message = F}
+library(dplyr)
+library(tidyr)
+library(MASS)
+library(mvtnorm)
+library(metafor)
+
+```
+
+
+# Raw Data
+
+```{r}
+set.seed(20200317)
+k <-  100 # number of studies 
+N <- 200  # N 
+
+# --------------------------------
+# generating sample sizes 
+# --------------------------------
+chisq <- rchisq(n = k, df = 3) 
+samplesize <- round((N/2) * ((chisq - 3)/(sqrt(6)))  + N, digits = 0)
+
+# --------------------------------
+# population correlation matrix 
+# --------------------------------
+R <- matrix(cbind(1,   .18, .06,
+                  .18, 1, .11,
+                  .06, .11, 1), nrow = 3)
+
+SD <- matrix(cbind(2, 0, 0, 
+                   0, 2, 0,
+                   0, 0, 7.67), nrow = 3)
+# --------------------------------
+# Sigma and Mean 
+# --------------------------------
+Sigma <- SD %*% R %*% t(SD) #covariance structure of observed variables
+Mu_ctr <- c(10, 10, 50.73)
+
+# -------------------------------------------------------------
+# for loop - generating control group individual data 
+# -------------------------------------------------------------
+raw_dat <- list()
+
+
+for (i in 1:k) {
+  
+  # Sample Size 
+  N <- samplesize[i]
+  
+  # Control Group
+  y_c <- rmvnorm(n = N, mean = Mu_ctr, sigma = Sigma) %>%
+    data.frame() %>%
+    mutate(group = "control",
+           N = N)
+  
+  es <- 0.5 # this can be changed - we may use a vector of effect sizes (but here I used a single effect size)
+  y_c_mean <- colMeans(y_c[,1:3])
+  sd_c <- apply(y_c[,1:3], 2, sd)
+  
+  s_p1 <- sqrt(((N - 1)*sd_c[1]  + (N - 1)*sd_c[1])/( 2*N - 2))  # pooled sd for verbal fluency 
+  s_p2 <- sqrt(((N - 1)*sd_c[2] + (N - 1)*sd_c[2])/( 2*N - 2))  # pooled sd for stroop color word
+  s_p3 <- sqrt(((N - 1)*sd_c[3] + (N - 1)*sd_c[3])/( 2*N - 2))  # pooled sd for internalizing
+
+   
+  # Treatment Group  
+  Mu_trt <- c(((es * s_p1) + y_c_mean[1]), ((es * s_p2) + y_c_mean[2]), ((es * s_p3) + y_c_mean[3]))
+
+  y_t <- rmvnorm(n = N, mean = Mu_trt, sigma = Sigma) %>%
+    data.frame() %>%
+    mutate(group = "intervention",
+           N = N)
+  
+  dat <- rbind(y_c, y_t)
+  colnames(dat)[1:3] <- c("Verbal", "Stroop", "Internalzing")
+  
+  # binary variable 
+  raw_dat[[i]] <- dat %>%
+    mutate(Grp = ifelse(group == "control", 0, 1))
+  
+}
+
+# just checking 
+head(raw_dat[[1]])
+
+
+```
+
+# Introducing missingness at variable-level
+Kejin: please note that I made either "verbal" or "Stroop" missing, assuming that primary studies include either one of the two mediator variables. Let me know if you have any questions!
+
+```{r}
+library(purrr)
+
+# -------------------------------------------------------------
+# a function to introduce missingness on either Verbal or Stroop variable
+# -------------------------------------------------------------
+intr_miss <- function(x) {
+if(runif(1, 0, 1) <.4) { x[,c("Verbal")] <- NA}
+  else{
+    if(runif(1, 0, 1) <.4) {x[,c("Stroop")] <- NA}}
+ return(x)
+  }
+
+
+raw_dat_miss <- purrr::map(raw_dat, intr_miss)
+# please use --> raw_dat_miss
+
+```
+
+# Calculate Summary stats
+
+```{r, warning=FALSE, message=FALSE}
+
+sim_dat <- 
+  bind_rows(raw_dat_miss, .id = "column_label")
+
+sim_clean <- 
+  sim_dat %>% 
+  dplyr::rename(studyid = column_label, y1 = group, y2 = Verbal, y3 = Stroop, y4 = Internalzing) %>%
+  dplyr::select(-N) %>% 
+  mutate(studyid = as.numeric(studyid),
+         y1 = ifelse(y1 == "control", "ctl", "trt")) %>% 
+  group_by(studyid) %>%
+  mutate(y2_dic = ifelse(y2 <= median(y2), 0, 1),
+         y2_dic = factor(y2_dic)) %>% 
+  ungroup()
+
+
+sum_y3y4 <- 
+  sim_clean %>%
+  pivot_longer(cols = y3:y4,
+               names_to = "variables",
+               values_to = "values") %>% 
+  group_by(studyid, y1, variables) %>% 
+  summarise(n = n(),
+            m = mean(values),
+            sd = sd(values)) %>% 
+  pivot_longer(cols = n:sd,
+               names_to = "stat",
+               values_to = "val")%>% 
+  unite(stat, stat, y1, variables, sep = "_") %>% 
+  pivot_wider(names_from = stat,
+              values_from = val)%>% 
+  mutate(n_ctl = n_ctl_y3,
+         n_trt = n_trt_y3) %>% 
+  dplyr::select(-c(n_ctl_y3, n_ctl_y4, n_trt_y3, n_trt_y4))
+
+
+sum_y2 <- 
+  sim_clean %>%
+  group_by(studyid, y1, y2_dic) %>% 
+  summarise(n = n()) %>% 
+  mutate(y1_y2_dic = ifelse(is.na(y2_dic), NA, paste0(y1, "_y2_", y2_dic, sep = ""))) %>% #############
+  ungroup() %>% 
+  dplyr::select(studyid, y1_y2_dic, n) %>%
+  filter(!is.na(y1_y2_dic)) %>% #############
+  pivot_wider(names_from = y1_y2_dic,
+              values_from = n)
+
+  
+sum_cor <- 
+  sim_clean %>%
+  group_by(studyid) %>% 
+  mutate(cor23 = cor(y2, y3),
+         cor24 = cor(y2, y4),
+         cor34 = cor(y3, y4)) %>%
+  ungroup() %>% 
+  group_by(studyid, y1) %>% 
+  mutate(cor23_y1 = cor(y2, y3),
+         cor24_y1 = cor(y2, y4),
+         cor34_y1 = cor(y3, y4)) %>% 
+  ungroup() %>%
+  dplyr::select(studyid, y1, starts_with("cor")) %>% 
+  unique() %>% 
+  pivot_longer(cols = cor23_y1:cor34_y1,
+               names_to = "cor",
+               values_to = "val") %>% 
+  unite(cor, cor, y1) %>% 
+  pivot_wider(names_from = cor,
+              values_from = val) %>%
+  rename_all(funs(c("studyid", "cor23", "cor24", "cor34", "cor23_ctl", 
+                    "cor24_ctl", "cor34_ctl", "cor23_trt", "cor24_trt", "cor34_trt")))
+
+summary_dat <- 
+  sum_cor %>% 
+  left_join(sum_y3y4, by = "studyid") %>% 
+  left_join(sum_y2, by = "studyid") %>% 
+  dplyr::select(studyid, starts_with("n_"), starts_with("cor"), starts_with("m"), 
+                starts_with("sd"), starts_with("ctl_y2"), starts_with("trt_y2"))
+
+summary_dat <- 
+  summary_dat %>% 
+  mutate(n_y2_0 = ctl_y2_0 + trt_y2_0,
+         n_y2_1 = ctl_y2_1 + trt_y2_1)
+```
+
+
+# Get correlation estimates
+Between y1 (group) and y3 or y4 (interval) - Controlled experiment.
+
+## Calculate d
+
+### From sample statistics
+```{r}
+cal_d <- function(trt_m, trt_sd, trt_n, ctl_m, ctl_sd, ctl_n){
+  d <- (trt_m - ctl_m)/sqrt(((trt_n-1)*trt_sd^2 + (ctl_n-1)*ctl_sd^2)/(trt_n + ctl_n -2))
+  v_d <- (trt_n + ctl_n)/(trt_n*ctl_n) + d^2 /(2*(trt_n + ctl_n))
+  cbind(d, v_d)
+}
+
+# y3
+es_dat <- summary_dat %>% mutate(d_y3 = cal_d(m_trt_y3, sd_trt_y3, n_trt, m_ctl_y3, sd_ctl_y3, n_ctl)[,"d"], v_d_y3 = cal_d(m_trt_y3, sd_trt_y3, n_trt, m_ctl_y3, sd_ctl_y3, n_ctl)[,"v_d"])
+
+# y4
+es_dat <- es_dat %>% mutate(d_y4 = cal_d(m_trt_y4, sd_trt_y4, n_trt, m_ctl_y4, sd_ctl_y4, n_ctl)[,"d"], v_d_y4 = cal_d(m_trt_y4, sd_trt_y4, n_trt, m_ctl_y4, sd_ctl_y4, n_ctl)[,"v_d"])
+
+```
+
+
+### From t statistic to d
+```{r}
+## Calculate t stat
+cal_t <- function(n_trt, m_trt, sd_trt, m_ctl, sd_ctl, n_ctl){
+sp <- sqrt(((n_trt-1)*sd_trt^2 + (n_ctl-1)*sd_ctl^2)/(n_trt + n_ctl -2))
+t <- (m_trt - m_ctl)/(sp*sqrt((1/n_ctl)+ (1/n_ctl)))
+t
+}
+
+## Calculate t to d - we may not need this. 
+cal_t_d <- function(t, trt_n, ctl_n){
+  d <- t*sqrt(1/trt_n + 1/ctl_n) 
+  d
+}
+
+```
+
+```{r}
+
+# Add into data
+### y3 and y4
+es_dat <- es_dat %>% 
+  mutate(t_y3 = cal_t(n_trt, m_trt_y3, sd_trt_y3, m_ctl_y3, sd_ctl_y3, n_ctl),
+         t_y4 = cal_t(n_trt, m_trt_y4, sd_trt_y4, m_ctl_y4, sd_ctl_y4, n_ctl))
+
+
+```
+
+## Calculate correlation: Exp design
+Between y1 and continuous variables (y3, y4)
+```{r}
+cal_rce <- function(d, n1, n2) {
+  a <- (n1+n2)^2/(n1*n2)
+  r_ce <- d/sqrt(d^2 + a^2)
+  r_ce
+}
+
+# large sample variance of r_ce
+cal_v_rce <- function(d, n1, n2){
+  a <- (n1+n2)^2/(n1*n2)
+  v_rce <- (a^4/(d^2 + a^2)^3)*((n1+n2)/(n1*n2) + (d^2)/(2*(n1+n2)))
+  v_rce
+}
+
+```
+
+
+```{r}
+es_dat <- es_dat %>%
+  mutate(rce_y1y3 = cal_rce(d_y3, n_trt, n_ctl),
+         v_rce_y1y3 = cal_v_rce(d_y3, n_trt, n_ctl),
+         rce_y1y4 = cal_rce(d_y4, n_trt, n_ctl),
+         v_rce_y1y4 = cal_v_rce(d_y4, n_trt, n_ctl))
+```
+
+
+## Calculate biserial correlation
+
+Between y2 and y4 (Use n_y2_0 and n_y2_1 to calculate the biserial correlation between dichotomized y2 and y4.)
+
+```{r}
+# d to r_b
+dtob <- function(d, n1, n2){
+  h <- (n1 + n2 -2)/n1 + (n1+n2-2)/n2
+  r_pb <- d/sqrt(d^2 + h)
+  p <- n1/(n1+n2)
+  c <- qnorm(p)
+  r_b <- (sqrt(p*(1-p))/dnorm(c))*r_pb
+return(r_b)
+}
+
+# t to r_b 
+ttob <- function(t, n1, n2){
+  m <- n1+n2-2
+  r_pb <- t/sqrt(t^2 + m)
+  p <- n1/(n1+n2)
+  c <- qnorm(p)
+  r_b <- (sqrt(p*(1-p))/dnorm(c))*r_pb
+  return(r_b)
+}
+```
+
+```{r}
+es_dat <- es_dat %>%
+  mutate(rb_y4_d = dtob(d_y4, n_y2_0, n_y2_1),
+         rb_y4_t = ttob(t_y4, n_y2_0, n_y2_1))
+```
+They are close, but not the same. 
+
+* Suggestions
+
+(1) Sampstat -> d -> r_pb -> r_b using `dtob`  
+(2) t stat -> r_pb -> r_b using `ttob` 
+
+
+```{r, eval = F}
+# d to t to r_b
+es_dat <- es_dat %>%
+  mutate(d_y4_t = cal_t_d(t_y4, n_y2_0, n_y2_1))
+
+es_dat <- es_dat %>%
+  mutate(rb_y4_dt = dtob(d_y4_t, n_y2_0, n_y2_1))
+```
+
+
+### Sampling variance of r_b - Soper's approxiamte method.
+```{r}
+cal_v_rb <- function(r_b, n1, n2) {
+p <- n1/(n1+n2)
+c <- qnorm(p)
+v_rb <- (1/(n1+n2-1))*((sqrt(p*(1-p))/dnorm(c) - r_b^2)^2)
+return(v_rb)
+}
+```
+
+```{r}
+es_dat <- es_dat %>%
+  mutate(v_rb_y4 = cal_v_rb(rb_y4_d, n_y2_0, n_y2_1))
+```
+
+
+## y1 (group) & y2 (dichotomous)
+
+* Can we use tetrachoric correlation for controlled experiment design? 
+  + Tetrachoric correlation assumes underlying continuous distribution of two dichotomous variables. 
+
+## 1. From contingency table
+
+```{r}
+# function from John Fox's polychor function
+# This uses ML estimator. 
+
+pcor <- function(x) {
+  require(polycor)
+  mat <- matrix(x, 2, 2)
+  pc <- polychor(x = mat, ML = TRUE, std.err=TRUE)
+  c(pcor = pc$rho, v_pcor = pc$var[1,1])
+}
+
+es_dat_y2 <- subset(es_dat, !is.na(ctl_y2_0)) #############
+
+rho <- 
+  apply(as.matrix(es_dat_y2[,grep("y2",names(es_dat_y2))]), 1, pcor) %>%  #############
+  t() %>% as.data.frame() %>%
+  mutate(studyid = es_dat_y2$studyid) %>%  #############
+  dplyr::select(studyid, pcor, v_pcor)
+
+# function from ?
+calc_tet <- function(a00, a11, a10, a01) {
+  or <- a00 * a11 / (a01 * a10)
+  v_or <- 1/a00 + 1/a01 + 1/a10 + 1/a11
+  delta <- 1 + sqrt(a00 * a11 / (a10 * a01))
+  r_tet <- cos(pi / delta) # from Pearson, 1900
+  n <- a00 + a11 + a10 + a01
+  p0 <- (a00 + a01) / n
+  p1 <- (a00 + a10) / n
+  z0 <- qnorm(p0)
+  z1 <- qnorm(p1)
+  h0 <- dnorm(z0)
+  h1 <- dnorm(z1)
+  v_tet <- (p0 * (1 - p0) * p1 * (1 - p1)) / (n * (h0 * h1)^2)
+  return(cbind(or, v_or, r_tet, v_tet))
+}
+
+
+## Final approximation from Divgi (1979)
+
+# es_dat1 includes tetrachoric correlation
+es_dat1 <- 
+  es_dat %>%
+  left_join(rho, by = "studyid") %>% 
+  mutate(r_tet = calc_tet(ctl_y2_0, trt_y2_1, ctl_y2_1, trt_y2_0)[, "r_tet"],
+         v_tet = calc_tet(ctl_y2_0, trt_y2_1, ctl_y2_1, trt_y2_0)[, "v_tet"],
+         or = calc_tet(ctl_y2_0, trt_y2_1, ctl_y2_1, trt_y2_0)[, "or"],
+         v_or = calc_tet(ctl_y2_0, trt_y2_1, ctl_y2_1, trt_y2_0)[, "v_or"])
+
+# es_dat2 includes the Odds ratio to d to r
+es_dat2 <- 
+  es_dat1 %>% 
+  mutate(d_f_or = log(or) * sqrt(3) / pi,
+         vd_f_or = 3 * v_or / (pi^2),
+         r_d_or = dtob(d_f_or, n_trt, n_ctl),
+         diff = pcor - r_d_or) # the difference btw tetrachoric from polychor function and the tetrachoric from OR to d to r
+```
+
+
+* Introduce missingness at the scenario level
+```{r}
+set.seed(20200401)
+scenario <- c("s1", "s2", "s3", "s4")
+y3_scenario <- sample(scenario, 100, replace = TRUE)
+y4_scenario <- sample(scenario, 100, replace = TRUE)
+
+scenario2 <- c("CellSize", "OR")
+y2_scenario <- sample(scenario2, 100, replace = TRUE)
+
+scenario3 <- c("summary", "cor")
+y2y4_sce <- sample(scenario3, 100, replace = TRUE)
+
+es_dat_final <-
+  es_dat2 %>% 
+  mutate(y13_scenario = y3_scenario,
+         y14_scenario = y4_scenario,
+         y12_scenario = y2_scenario,
+         y24_scenario = y2y4_sce)
+
+
+```
+
+
+
+* OR to d to r: Seems not appropriate. 
+
+Odds ratio / log-odds ratio 
+```{r}
+cal_or <- function(n11, n12, n21, n22){
+  or <- (n11*n22)/(n12*n21)
+  or
+}
+
+cal_or_se <- function(n11, n12, n21, n22) {
+  se <- sqrt((1/n11) + (1/n12) + (1/n21) + (1/n22))
+  se
+}
+
+es_dat <- es_dat %>%
+  mutate(or_y2 = cal_or(n_ctl_y2_0, n_ctl_y2_1, n_trt_y2_0, n_trt_y2_1),
+         or_se_y2 = cal_or_se(n_ctl_y2_0, n_ctl_y2_1, n_trt_y2_0, n_trt_y2_1))
+```
+
+phi coefficient
+```{r}
+library(psych)
+
+## Hand calculation
+cal_phi <- function(n11, n12, n21, n22){
+  n.1 <- n11 + n21
+  n.2 <- n12 + n22
+  n1. <- n11 + n12
+  n2. <- n21 + n22
+  n <- n11 + n12 + n21 + n22
+  phi <- (n11*n22 - n12*n21)/sqrt(n.1*n.2*n1.*n2.)
+  phi
+}
+
+es_dat <- es_dat %>%
+  mutate(phi_f = phi(matrix(c(n_ctl_y2_0, n_ctl_y2_1, n_trt_y2_0, n_trt_y2_1), ncol =2), digits = 5),
+         phi_hand = cal_phi(n_ctl_y2_0, n_ctl_y2_1, n_trt_y2_0, n_trt_y2_1))
+```
+
+Yes! They are matched!
+
+
+
+
+
+* Salsman et al., 2015
+  + Pearson: 611
+  + Biesrial: 34
+  + Tet: 16
+
+
+```{r}
+tot <- 611+34+16
+pearson<- 611/tot
+bis <- 34/tot
+tet <- 16/tot
+```
+
+Add indicator to be one of those types of correlation.
+
