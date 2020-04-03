@@ -1,0 +1,34 @@
+Package: macor
+Type: Package
+Title: Calculate correlation for meta-analysis
+Version: 0.1.0
+Authors@R: c(
+    person(given = "Man",
+           family = "Chen",
+           email = "amandachen@utexas.edu",
+           role = c("aut", "cre")),
+    person(given = "Man",
+           family = "Chen",
+           email = "amandachen@utexas.edu",
+           role = c("aut", "cre")),
+Maintainer: Man Chen <amandachen@utexas.edu>
+Description: Provides functions to calculate comparable correlation from different types of information provided in primary data.
+URL: https://github.com/manchen07/macor
+BugReports: https://github.com/manchen07/macor/issues
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Depends:
+    R (>= 3.5.0)
+Suggests: 
+    covr,
+    testthat (>= 2.1.0),
+    knitr,
+    rmarkdown,
+    dplyr,
+    tidyr
+Imports: 
+    polycor
+VignetteBuilder: knitr
+RoxygenNote: 7.0.2
+Language: en-US
