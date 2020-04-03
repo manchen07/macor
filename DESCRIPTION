@@ -7,10 +7,10 @@ Authors@R: c(
            family = "Chen",
            email = "amandachen@utexas.edu",
            role = c("aut", "cre")),
-    person(given = "Man",
-           family = "Chen",
-           email = "amandachen@utexas.edu",
-           role = c("aut", "cre"))
+    person(given = "Jihyun",
+           family = "Lee",
+           email = "jihyunl@utexas.edu",
+           role = c("aut")))
 Maintainer: Man Chen <amandachen@utexas.edu>
 Description: Provides functions to calculate comparable correlation from different types of information provided in primary data.
 URL: https://github.com/manchen07/macor
