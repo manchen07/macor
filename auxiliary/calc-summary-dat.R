@@ -23,23 +23,25 @@ sim_clean <-
          y2_dic = factor(y2_dic)) %>% 
   ungroup()
 
+sum_y2y4 <- 
+  sim_clean %>%
+  group_by(studyid, y2_dic)%>%
+  summarise(n = n(), m = mean(y4), sd = sd(y4)) %>%
+  pivot_wider(names_from = y2_dic, values_from = n:sd)%>% 
+  dplyr::select(-c(n_NA, m_NA, sd_NA))%>%
+  rename(n_0_y4 = n_0, n_1_y4 = n_1, m_0_y4 = m_0, m_1_y4 = m_1, sd_0_y4 = sd_0, sd_1_y4 = sd_1)
+
 sum_y3y4 <- 
   sim_clean %>%
   pivot_longer(cols = y3:y4,
                names_to = "variables",
                values_to = "values") %>% 
   group_by(studyid, y1, variables) %>% 
-  summarise(n = n(),
-            m = mean(values),
-            sd = sd(values)) %>% 
-  pivot_longer(cols = n:sd,
-               names_to = "stat",
-               values_to = "val")%>% 
+  summarise(n = n(), m = mean(values), sd = sd(values)) %>% 
+  pivot_longer(cols = n:sd, names_to = "stat", values_to = "val")%>% 
   unite(stat, stat, y1, variables, sep = "_") %>% 
-  pivot_wider(names_from = stat,
-              values_from = val)%>% 
-  mutate(n_ctl = n_ctl_y3,
-         n_trt = n_trt_y3) %>% 
+  pivot_wider(names_from = stat, values_from = val)%>% 
+  mutate(n_ctl = n_ctl_y3, n_trt = n_trt_y3) %>% 
   dplyr::select(-c(n_ctl_y3, n_ctl_y4, n_trt_y3, n_trt_y4))
 
 sum_y2 <- 
@@ -55,20 +57,14 @@ sum_y2 <-
 sum_cor <- 
   sim_clean %>%
   group_by(studyid) %>% 
-  mutate(cor23 = cor(y2, y3),
-         cor24 = cor(y2, y4),
-         cor34 = cor(y3, y4)) %>%
+  mutate(cor23 = cor(y2, y3), cor24 = cor(y2, y4), cor34 = cor(y3, y4)) %>%
   ungroup() %>% 
   group_by(studyid, y1) %>% 
-  mutate(cor23_y1 = cor(y2, y3),
-         cor24_y1 = cor(y2, y4),
-         cor34_y1 = cor(y3, y4)) %>% 
+  mutate(cor23_y1 = cor(y2, y3), cor24_y1 = cor(y2, y4), cor34_y1 = cor(y3, y4)) %>% 
   ungroup() %>%
   dplyr::select(studyid, y1, starts_with("cor")) %>% 
   unique() %>% 
-  pivot_longer(cols = cor23_y1:cor34_y1,
-               names_to = "cor",
-               values_to = "val") %>% 
+  pivot_longer(cols = cor23_y1:cor34_y1, names_to = "cor", values_to = "val") %>% 
   unite(cor, cor, y1) %>% 
   pivot_wider(names_from = cor,
               values_from = val) %>%
@@ -76,7 +72,8 @@ sum_cor <-
                     "cor24_ctl", "cor34_ctl", "cor23_trt", "cor24_trt", "cor34_trt")))
 
 summary_dat <- 
-  sum_cor %>% 
+  sum_cor %>%
+  left_join(sum_y2y4, by = "studyid") %>% 
   left_join(sum_y3y4, by = "studyid") %>% 
   left_join(sum_y2, by = "studyid") %>% 
   dplyr::select(studyid, starts_with("n_"), starts_with("cor"), starts_with("m"), 
@@ -139,6 +136,8 @@ summary_dat <-
             .funs = list(~ ifelse(y12_scenario == "or", ., NA))) %>% 
   
   # regarding y2 and y4
+  mutate_at(.vars = vars(n_0_y4, n_1_y4, m_0_y4, m_1_y4, sd_0_y4, sd_1_y4),
+            .funs = list(~ ifelse(y24_scenario == "summary", ., NA))) %>% 
   mutate(cor24 = ifelse(y24_scenario == "cor", cor24, NA)) # did not include summary bc it might conflicts with y1 and y4
 
 save(summary_dat, file = "data/summary_dat.RData", compress = TRUE)
