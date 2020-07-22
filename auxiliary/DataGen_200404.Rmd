@@ -14,7 +14,7 @@ library(MASS)
 library(mvtnorm)
 library(metafor)
 ```
-
+* Checking 
 
 # Raw Data
 
